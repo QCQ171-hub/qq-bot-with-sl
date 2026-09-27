@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QQAI聊天工具</title>
+    <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+<div id="app">
+    <!-- ───────── 左栏：会话列表 ───────── -->
+    <aside class="sidebar">
+        <div class="brand">
+            <div class="brand-logo">QQ</div>
+            <div class="brand-text">
+                <strong>QQAI聊天工具</strong>
+                <span id="modelBadge" class="badge">模型未设置</span>
+            </div>
+        </div>
+
+        <div class="conn" id="connBox">
+            <div class="conn-row"><span>后端</span><b id="connBackend">连接中…</b></div>
+            <div class="conn-row"><span>OneBot</span><b id="connOnebot">—</b></div>
+            <div class="conn-row">
+                <span>发送通道</span>
+                <b id="connMode">—</b>
+            </div>
+            <div class="conn-row"><span>自动收信</span><b id="connAuto">—</b></div>
+            <div class="conn-row"><span>今日 Token</span><b id="connToken" title="今天调用模型累计消耗的 token（AI 回复里写 %token 会替换成这个数）">—</b></div>
+        </div>
+
+        <div class="list-head">
+            <span>群聊</span>
+            <span>
+                <button class="mini" onclick="syncGroups()">同步</button>
+                <button class="mini" onclick="addGroup()">+ 添加</button>
+            </span>
+        </div>
+        <div class="conv-list" id="groupList"></div>
+
+        <div class="list-head">
+            <span>私聊</span>
+            <span>
+                <button class="mini" onclick="syncPrivates()">同步</button>
+                <button class="mini" onclick="addPrivate()">+ 添加</button>
+            </span>
+        </div>
+        <div class="conv-list" id="privateList"></div>
+    </aside>
+
+    <!-- ───────── 中栏：聊天窗口 ───────── -->
+    <main class="chat">
+        <header class="chat-head">
+            <div>
+                <h2 id="chatTitle">选择一个会话</h2>
+                <small id="chatSub">左侧点群聊/私聊开始</small>
+            </div>
+            <div class="chat-head-actions">
+                <label class="switch">
+                    <input type="checkbox" id="autoReplyToggle" onchange="toggleAutoReply(this.checked)">
+                    <span>自动收信回复</span>
+                </label>
+                <label class="switch">
+                    <input type="checkbox" id="realSendToggle" onchange="toggleSendMode(this.checked)">
+                    <span>真实发送到 QQ</span>
+                </label>
+                <button class="ghost" onclick="clearMessages()">清空记录</button>
+            </div>
+        </header>
+
+        <div class="messages" id="messagesContainer">
+            <div class="empty-tip">还没有消息。右侧配置好模型名字后，在下方以某个群友的口吻说一句话试试。</div>
+        </div>
+
+        <div class="composer">
+            <div class="composer-tools">
+                <input type="text" id="speakerName" placeholder="说话的人（%name）" value="张三">
+                <input type="text" id="speakerId" placeholder="TA 的 QQ 号（%id）" class="narrow">
+                <input type="text" id="modelOverride" placeholder="本次模型名字（留空用配置里的）" class="wide">
+                <span class="hint">支持换行；内容里的 <code>{send:…}</code> <code>{image:编号}</code> 会被解析；<code>%token</code>=今日token <code>%gname</code>=群名 <code>%id</code>=@对方</span>
+            </div>
+            <textarea id="messageInput" rows="3"
+                      placeholder="输入要让 AI 看到的话，点「问 AI」；也可以直接写 {send:你好}{image:3,time:2030} 走手动排队"></textarea>
+            <div class="composer-actions">
+                <button class="primary" onclick="askAI(this)">问 AI（生成回复）</button>
+                <button onclick="previewParse()">解析预览</button>
+                <button onclick="manualEnqueue()">按格式排队</button>
+                <button class="ghost" onclick="sendDirect()">直接发这条</button>
+                <span class="kbd">Ctrl+Enter 问 AI</span>
+            </div>
+        </div>
+    </main>
+
+    <!-- ───────── 右栏：配置 / 表情包 ───────── -->
+    <section class="panel">
+        <nav class="tabs">
+            <button class="tab active" onclick="switchTab('config', this)">配置</button>
+            <button class="tab" onclick="switchTab('stickers', this)">表情包</button>
+            <button class="tab" onclick="switchTab('queue', this)">待发送</button>
+        </nav>
+
+        <div class="tab-body" id="tab-config">
+            <div class="field">
+                <label>API Key <small>（原 config.json 的 api_url 字段）</small></label>
+                <input type="text" id="apiUrl" placeholder="粘贴智谱 GLM 等平台的 API Key">
+            </div>
+            <div class="field">
+                <label>接口地址 base_url</label>
+                <input type="text" id="baseUrl" placeholder="https://open.bigmodel.cn/api/paas/v4/">
+            </div>
+            <div class="field">
+                <label>模型名字 <em>*</em></label>
+                <input type="text" id="model" placeholder="例如 glm-4-flash / glm-4-plus / deepseek-v3">
+            </div>
+            <div class="field">
+                <label>AI 人设</label>
+                <textarea id="persona" rows="2" placeholder="例如：吃白饭的傲娇大肥鱼"></textarea>
+            </div>
+            <div class="field">
+                <label>默认提示词
+                    <small>%s 内容 %name 说话人 %id 号码 %time 当前时间</small>
+                    <button class="mini" onclick="restoreDefaultPrompt()">恢复默认</button>
+                </label>
+                <textarea id="promptTemplate" rows="5"></textarea>
+            </div>
+            <div class="field">
+                <label>OneBot HTTP 地址 <small>（SnowLuma 的 HTTP API，不是 WS 端口）</small></label>
+                <input type="text" id="onebotUrl" placeholder="http://127.0.0.1:3000">
+            </div>
+            <div class="field">
+                <label>OneBot accessToken</label>
+                <input type="text" id="onebotToken" placeholder="没设置就留空">
+            </div>
+            <div class="field grid2">
+                <div>
+                    <label>发送通道</label>
+                    <select id="sendMode">
+                        <option value="auto">自动（OneBot 在线就真发）</option>
+                        <option value="real">强制真实发送</option>
+                        <option value="simulate">只本地模拟</option>
+                    </select>
+                </div>
+                <div>
+                    <label>队列间隔 ms <small>队列 0→1 瞬间发第一条，第二条起等这个间隔；0=同时发</small></label>
+                    <input type="number" id="sendIntervalMs" min="0" step="100">
+                </div>
+            </div>
+            <div class="field grid2">
+                <div>
+                    <label>max_tokens</label>
+                    <input type="number" id="maxTokens" min="64" step="64">
+                </div>
+                <div>
+                    <label>temperature</label>
+                    <input type="number" id="temperature" min="0" max="2" step="0.1">
+                </div>
+            </div>
+            <div class="field">
+                <label>自动收信回复 <small>后端轮询 OneBot 群/好友消息，按分寸决定接不接话</small></label>
+            </div>
+            <div class="field grid2">
+                <div>
+                    <label>轮询间隔 ms</label>
+                    <input type="number" id="autoCheckMs" min="1000" step="500">
+                </div>
+                <div>
+                    <label>回复概率 % <small>越小越冷淡</small></label>
+                    <input type="number" id="replyProbability" min="0" max="100" step="5">
+                </div>
+            </div>
+            <div class="field grid2">
+                <div>
+                    <label>冷却 ms <small>两次触发间隔</small></label>
+                    <input type="number" id="replyCooldownMs" min="0" step="5000">
+                </div>
+                <div>
+                    <label>上下文条数 <small>喂给模型的群聊记录</small></label>
+                    <input type="number" id="contextWindow" min="1" max="50" step="1">
+                </div>
+            </div>
+            <div class="field">
+                <label>必回关键词 <small>逗号分隔；@我 恒为必回</small></label>
+                <input type="text" id="mustReplyKeywords" placeholder="在吗,大肥鱼,？">
+            </div>
+            <div class="field grid2">
+                <div>
+                    <label>表情长边 px <small>发表情前压缩，0=原图</small></label>
+                    <input type="number" id="stickerEdge" min="0" max="2000" step="1">
+                </div>
+                <div>
+                    <label>同步表情数量上限</label>
+                    <input type="number" id="stickerCount" min="1" max="500" step="10">
+                </div>
+            </div>
+            <div class="field checks">
+                <label><input type="checkbox" id="autoConfirm"> 自动回复跳过「还发不发」直接发送</label>
+                <label><input type="checkbox" id="appendHint"> 提示里鼓励追加/定时消息（更有连发和约时间的欲望）</label>
+                <label><input type="checkbox" id="privateAlwaysReply"> 私聊必回</label>
+            </div>
+            <div class="field">
+                <label>黑名单 QQ 号 <small>逗号分隔；不回复这些人的消息，优先级高于白名单</small></label>
+                <input type="text" id="blacklistInput" placeholder="123456, 234567">
+            </div>
+            <div class="field">
+                <label>白名单 QQ 号 <small>逗号分隔；填了之后只回复名单里的人</small></label>
+                <input type="text" id="whitelistInput" placeholder="345678">
+            </div>
+            <div class="field">
+                <label>黑名单/白名单说明 <small>按 QQ 号记录，不认名字；也可以在聊天窗口右键头像快速加/移</small></label>
+            </div>
+            <div class="field checks">
+                <label><input type="checkbox" id="attachFormatHint"> 附带系统格式说明（推荐）</label>
+                <label><input type="checkbox" id="attachStickerList"> 把表情编号喂给模型</label>
+            </div>
+            <div class="panel-actions">
+                <button class="primary" onclick="saveConfig()">保存配置</button>
+                <button onclick="saveUserLists()">保存黑白名单</button>
+                <button onclick="testQQ()">测 OneBot</button>
+                <button onclick="testAI()">测模型</button>
+            </div>
+        </div>
+
+        <div class="tab-body hidden" id="tab-stickers">
+            <div class="sticker-bar">
+                <button class="primary" onclick="syncStickers()">从 QQ 同步收藏表情</button>
+                <button onclick="addSticker()">手动添加</button>
+                <span class="hint" id="stickerHint">编号用于 {image:编号}</span>
+            </div>
+            <div class="stickers-grid" id="stickersGrid"></div>
+        </div>
+
+        <div class="tab-body hidden" id="tab-queue">
+            <div class="queue-head">
+                <span id="queueCount">0 条待确认 / 0 条排队中</span>
+                <button class="ghost" onclick="cancelAll()">全部不发</button>
+            </div>
+            <div id="queueList"></div>
+        </div>
+    </section>
+</div>
+
+<!-- ───────── 还发不发 弹窗 ───────── -->
+<div class="modal hidden" id="askModal">
+    <div class="modal-card">
+        <h3>还发不发？</h3>
+        <p class="modal-sub" id="askTarget">—</p>
+        <div class="bubble-preview" id="askItems"></div>
+        <div class="modal-raw" id="askRaw"></div>
+        <div class="modal-actions">
+            <button class="primary" onclick="confirmAsk(true)">发！</button>
+            <button onclick="confirmAsk(false)">不发</button>
+            <button class="ghost" onclick="closeAsk()">先不管，继续聊</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal hidden" id="previewModal">
+    <div class="modal-card">
+        <h3>解析结果</h3>
+        <div class="bubble-preview" id="previewItems"></div>
+        <div class="modal-raw" id="previewErrors"></div>
+        <div class="modal-actions">
+            <button class="ghost" onclick="hide('previewModal')">关闭</button>
+        </div>
+    </div>
+</div>
+
+<div id="toastBox"></div>
+<script src="static/script.js"></script>
+</body>
+</html>
